@@ -1,0 +1,12 @@
+The random root for this run is: 2
+Prob 01: test_broadcast: PASS
+Prob 02: test_reduction: PASS
+Prob 03: test_scatter: PASS
+Prob 04: test_gather: FAIL
+     in_seq = [  1,  2,  3,  4, ]
+out_seq_tst = [  -1.000000,  -1.000000,  -1.000000,  -1.000000,  -1.000000,  -1.000000,  -1.000000,  -1.000000,  -1.000000,  -1.000000,  -1.000000,  -1.000000,  -1.000000,  -1.000000,  -1.000000,  -1.000000, ]
+out_seq_ref = [  -1.000000,  -1.000000,  -1.000000,  -1.000000,  -1.000000,  -1.000000,  -1.000000,  -1.000000,  1,  2,  3,  4,  -1.000000,  -1.000000,  -1.000000,  -1.000000, ]
+
+Prob 05: test_all_reduce: PASS
+Prob 06: test_all_gather: PASS
+Prob 07: test_all_to_all: PASS

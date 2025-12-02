@@ -17,9 +17,6 @@
 		  make compile-schooner	    
 		  make run-schooner		    
 
-		
-
-
 
   Submission: For this assignment you will upload three artifacts to canvas. 
               DO NOT INCLUDE YOUR NAME or other identifying information in
@@ -96,7 +93,8 @@ void print_float_mem(char *name, int vlen, float *src)
   for( int vid = 0; vid < vlen; ++vid )
     {
       if ( src[vid] < 0.0f )
-	printf( " x, ", src[vid] );
+	printf(" %f, ", src[vid]);
+
       else
 	printf( "%2.f, ", src[vid] );
     }
@@ -358,6 +356,26 @@ void student_bcast(int root_rid, float *input_distributed, float *output_distrib
   /*
     STUDENT_TODO
   */
+  // Root sends its value to all other ranks. Everyone sets output_distributed
+  // to the root's value.
+  if (rid == root_rid)
+    {
+      // root copies its own input to its output
+      *output_distributed = *input_distributed;
+      // send to all other ranks
+      for (int dest = 0; dest < num_ranks; ++dest)
+	{
+	  if (dest == rid) continue;
+	  MPI_Send(input_distributed, 1, MPI_FLOAT, dest, tag, MPI_COMM_WORLD);
+	}
+    }
+  else
+    {
+      // non-root receive from root
+      float tmp;
+      MPI_Recv(&tmp, 1, MPI_FLOAT, root_rid, tag, MPI_COMM_WORLD, &status);
+      *output_distributed = tmp;
+    }
 
 }
 
@@ -398,7 +416,7 @@ void test_broadcast(char *prob, int root_rid)
   fill_sequences( num_ranks, 1, input_sequential );
   neg_xout_sequences( num_ranks, output_sequential_test );
   neg_xout_sequences( num_ranks, output_sequential_reference );
-
+  
 
   /*
     Reference Sequential Implementation
@@ -498,6 +516,27 @@ void student_reduction( int root_rid,
   /*
     STUDENT_TODO
   */
+  if (rid == root_rid)
+    {
+      float sum = 0.0f;
+      // include root's own contribution
+      sum += *src_distributed;
+      // receive from others
+      for (int src = 0; src < num_ranks; ++src)
+	{
+	  if (src == rid) continue;
+	  float val;
+	  MPI_Recv(&val, 1, MPI_FLOAT, src, tag, MPI_COMM_WORLD, &status);
+	  sum += val;
+	}
+      *output_distributed = sum;
+    }
+  else
+    {
+      // non-root send own value to root_rid
+      MPI_Send(src_distributed, 1, MPI_FLOAT, root_rid, tag, MPI_COMM_WORLD);
+      // leave output_distributed untouched (test initialized it to -1)
+    }
 
 }
 
@@ -604,7 +643,33 @@ void student_scatter(int root_rid, float *src, float *dst)
   /*
     STUDENT_TODO
   */
-
+  // The distributed data src is arranged so that process i holds row i (length num_ranks).
+  // We want to scatter row 'root_rid' (owned by process root_rid) so that each process
+  // receives the corresponding element from that row.
+  if (rid == root_rid)
+    {
+      // root has the full row in src (length num_ranks)
+      // send each element to appropriate destination
+      for (int dest = 0; dest < num_ranks; ++dest)
+	{
+	  if (dest == rid)
+	    {
+	      // own element placed locally
+	      *dst = src[dest];
+	    }
+	  else
+	    {
+	      MPI_Send(&src[dest], 1, MPI_FLOAT, dest, tag, MPI_COMM_WORLD);
+	    }
+	}
+    }
+  else
+    {
+      // non-root processes receive their element from root_rid
+      float tmp;
+      MPI_Recv(&tmp, 1, MPI_FLOAT, root_rid, tag, MPI_COMM_WORLD, &status);
+      *dst = tmp;
+    }
 }
 
 void reference_scatter(int root_rid, float *input_sequential, float *output_sequential )
@@ -647,7 +712,7 @@ void test_scatter(char *prob, int root_rid)
   neg_xout_sequences( 1, output_distributed_test );
   neg_xout_sequences( num_ranks, output_sequential_test );
   neg_xout_sequences( num_ranks, output_sequential_reference );
-
+  
 
   /*
     Reference Sequential Implementation
@@ -749,6 +814,25 @@ void student_gather( int root_rid,
   /*
     STUDENT_TODO
   */
+  if (rid == root_rid)
+    {
+      // root places its own value
+      output_distributed[rid + root_rid * num_ranks] = *src_distributed;
+      // receive others and place at index src_rid + root_rid*num_ranks
+      for (int src = 0; src < num_ranks; ++src)
+	{
+	  if (src == rid) continue;
+	  float val;
+	  MPI_Recv(&val, 1, MPI_FLOAT, src, tag, MPI_COMM_WORLD, &status);
+	  output_distributed[src + root_rid * num_ranks] = val;
+	}
+    }
+  else
+    {
+      // non-root send their value to root
+      MPI_Send(src_distributed, 1, MPI_FLOAT, root_rid, tag, MPI_COMM_WORLD);
+      // non-root do not modify their output_distributed
+    }
 
 }
 
@@ -774,7 +858,7 @@ void test_gather(char *prob, int root_rid)
   neg_xout_sequences( num_ranks, output_distributed_test );
   neg_xout_sequences( num_ranks*num_ranks, output_sequential_test );
   neg_xout_sequences( num_ranks*num_ranks, output_sequential_reference );
-
+  
 
   /*
     Reference Sequential Implementation
@@ -803,8 +887,8 @@ void test_gather(char *prob, int root_rid)
   //  print_distributed_data( "bt_dist",
   //			  num_ranks,
   //			  output_distributed_test );
-
   
+
   if (rid == 0 )
     {
 
@@ -884,6 +968,37 @@ void student_all_reduce(float *input_distributed,
   /*
     STUDENT_TODO
   */
+  // simple reduce to rank 0, then broadcast sum to all ranks
+  int reduce_root = 0;
+  if (rid == reduce_root)
+    {
+      float sum = 0.0f;
+      sum += *input_distributed; // own
+      for (int src = 0; src < num_ranks; ++src)
+	{
+	  if (src == rid) continue;
+	  float val;
+	  MPI_Recv(&val, 1, MPI_FLOAT, src, tag, MPI_COMM_WORLD, &status);
+	  sum += val;
+	}
+      // place sum locally
+      *output_distributed = sum;
+      // send sum to all others
+      for (int dest = 0; dest < num_ranks; ++dest)
+	{
+	  if (dest == rid) continue;
+	  MPI_Send(&sum, 1, MPI_FLOAT, dest, tag, MPI_COMM_WORLD);
+	}
+    }
+  else
+    {
+      // send own value to reduce_root
+      MPI_Send(input_distributed, 1, MPI_FLOAT, reduce_root, tag, MPI_COMM_WORLD);
+      // then receive the sum broadcast
+      float sum;
+      MPI_Recv(&sum, 1, MPI_FLOAT, reduce_root, tag, MPI_COMM_WORLD, &status);
+      *output_distributed = sum;
+    }
 }
 
 
@@ -909,7 +1024,7 @@ void test_all_reduce(char *prob, int root_rid)
   fill_sequences( num_ranks, 1, input_sequential );
   neg_xout_sequences( num_ranks, output_sequential_test );
   neg_xout_sequences( num_ranks, output_sequential_reference );
-
+  
 
   /*
     Reference Sequential Implementation
@@ -1012,6 +1127,40 @@ void student_all_gather( float *src_distributed,
   /*
     STUDENT_TODO
   */
+  // Each process must end up with the full array of all processes' src values.
+  // We'll use non-blocking sends to avoid deadlock, then receive values.
+  MPI_Request *reqs = (MPI_Request *)malloc(sizeof(MPI_Request)*num_ranks);
+  int req_count = 0;
+
+  // post sends to all other ranks
+  for (int dest = 0; dest < num_ranks; ++dest)
+    {
+      if (dest == rid)
+	{
+	  // set own entry
+	  output_distributed[dest] = *src_distributed;
+	  reqs[req_count++]=MPI_REQUEST_NULL;
+	}
+      else
+	{
+	  MPI_Isend(src_distributed, 1, MPI_FLOAT, dest, tag, MPI_COMM_WORLD, &reqs[req_count++]);
+	}
+    }
+
+  // receive from all other ranks
+  for (int src = 0; src < num_ranks; ++src)
+    {
+      if (src == rid) continue;
+      MPI_Recv(&output_distributed[src], 1, MPI_FLOAT, src, tag, MPI_COMM_WORLD, &status);
+    }
+
+  // wait for outstanding sends to complete
+  for (int i = 0; i < req_count; ++i)
+    {
+      if (reqs[i] != MPI_REQUEST_NULL)
+	MPI_Wait(&reqs[i], MPI_STATUS_IGNORE);
+    }
+  free(reqs);
 }
 
 void test_all_gather(char *prob, int root_rid)
@@ -1037,7 +1186,7 @@ void test_all_gather(char *prob, int root_rid)
   neg_xout_sequences( num_ranks, output_distributed_test );
   neg_xout_sequences( num_ranks*num_ranks, output_sequential_test );
   neg_xout_sequences( num_ranks*num_ranks, output_sequential_reference );
-
+  
 
   /*
     Reference Sequential Implementation
@@ -1141,6 +1290,45 @@ void student_all_to_all( float *src_distributed,
   /*
     STUDENT_TODO
   */
+  // We want output_distributed on each process 'r' to contain values
+  // from every process 'i' where output_distributed[i] = src_of_i[r].
+  // Each process i must send src_distributed[r] to process r and process r
+  // stores that in output_distributed[i].
+  //
+  // To avoid deadlock we'll post non-blocking sends then receive.
+  MPI_Request *reqs = (MPI_Request *)malloc(sizeof(MPI_Request)*num_ranks);
+  int req_count = 0;
+
+  for (int dest = 0; dest < num_ranks; ++dest)
+    {
+      if (dest == rid)
+	{
+	  // self contribution: output_distributed[rid] comes from src_distributed[rid]
+	  output_distributed[rid] = src_distributed[rid];
+	  reqs[req_count++] = MPI_REQUEST_NULL;
+	}
+      else
+	{
+	  // send the element that belongs to dest (src_distributed[dest]) to dest
+	  MPI_Isend(&src_distributed[dest], 1, MPI_FLOAT, dest, tag, MPI_COMM_WORLD, &reqs[req_count++]);
+	}
+    }
+
+  // receive contributions from every other rank src -> place at index src
+  for (int src = 0; src < num_ranks; ++src)
+    {
+      if (src == rid) continue;
+      MPI_Recv(&output_distributed[src], 1, MPI_FLOAT, src, tag, MPI_COMM_WORLD, &status);
+    }
+
+  // wait for outstanding sends
+  for (int i = 0; i < req_count; ++i)
+    {
+      if (reqs[i] != MPI_REQUEST_NULL)
+	MPI_Wait(&reqs[i], MPI_STATUS_IGNORE);
+    }
+  free(reqs);
+
 }
 
 
@@ -1166,12 +1354,11 @@ void test_all_to_all(char *prob, int root_rid)
   neg_xout_sequences( num_ranks, output_distributed_test );
   neg_xout_sequences( num_ranks*num_ranks, output_sequential_test );
   neg_xout_sequences( num_ranks*num_ranks, output_sequential_reference );
-
+  
 
   /*
     Reference Sequential Implementation
   */
-
   reference_all_to_all( input_sequential, output_sequential_reference );
 
   /*
